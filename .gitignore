@@ -26,6 +26,8 @@ Thumbs.db
 # Logs
 *.log
 
-# MQTT cache file (runtime data)
+# Cache files (runtime data)
 mqtt_cache.json
 mqtt_cache.tmp
+mes_cache.json
+mes_cache.tmp
