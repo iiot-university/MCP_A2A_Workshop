@@ -102,6 +102,8 @@ pip install -r requirements.txt
 
 All four schemas are accessible to the MCP server and can be queried using natural language through Claude.
 
+**📚 Detailed Schema Documentation:** See the [schemas/](schemas/) directory for comprehensive table definitions, column descriptions, and example queries for each database.
+
 ---
 
 ## Building Query Tools
@@ -244,6 +246,10 @@ By the end of this section, you have:
 
 | File | Purpose |
 |------|---------|
+| `schemas/` | Database schema documentation for agents |
+| `schemas/MES_LITE.md` | Core MES tables reference |
+| `schemas/MES_CUSTOM.md` | Extended MES features reference |
+| `schemas/PROVEITDB.md` | Demo data reference |
 | `README.md` | This guide |
 | `requirements.txt` | Python dependencies |
 | `src/mysql_mcp_server.py` | Main MCP server implementation (built with Cursor) |
