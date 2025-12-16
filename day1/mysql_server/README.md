@@ -4,6 +4,14 @@
 
 This section adds a second MCP server that connects to MySQL databases from the Virtual Factory. Combined with the MQTT server from Session 2, Claude can now query both real-time UNS data and relational database records.
 
+## Status: ✅ Complete
+
+All 4 tools implemented and tested:
+- ✅ `list_schemas` - Discover available databases
+- ✅ `list_tables` - List tables with row counts
+- ✅ `describe_table` - Get column definitions
+- ✅ `execute_query` - Run read-only SELECT queries
+
 ## Goals
 
 - Build a second MCP server for relational data access
@@ -48,6 +56,11 @@ MCP_A2A_Workshop/
     └── mysql_server/
         ├── README.md
         ├── requirements.txt
+        ├── venv/           # Virtual environment (gitignored)
+        ├── schemas/        # Database documentation for agents
+        │   ├── MES_LITE.md
+        │   ├── MES_CUSTOM.md
+        │   └── PROVEITDB.md
         └── src/
             └── mysql_mcp_server.py
 ```
@@ -106,54 +119,62 @@ All four schemas are accessible to the MCP server and can be queried using natur
 
 ---
 
-## Building Query Tools
+## Implemented Tools
 
-### Tool 1 -- list_schemas
+### Tool 1 -- list_schemas ✅
 
 Lists available database schemas the agent can access.
 
 **Purpose:** Let Claude discover what databases are available
 
-**Input:** None
+**Inputs:** None
 
 **Output:** List of schema names with descriptions
 
-### Tool 2 -- list_tables
+### Tool 2 -- list_tables ✅
 
 Lists tables within a specified schema.
 
 **Purpose:** Let Claude explore database structure
 
-**Input:** Schema name (e.g., `mes_lite`)
+**Inputs:**
+- `schema` (required): Database schema name (e.g., `mes_lite`)
 
-**Output:** List of tables with row counts
+**Output:** List of tables with approximate row counts
 
-### Tool 3 -- describe_table
+### Tool 3 -- describe_table ✅
 
 Returns column definitions for a table.
 
 **Purpose:** Let Claude understand table structure before querying
 
-**Input:** Schema name, table name
+**Inputs:**
+- `schema` (required): Database schema name
+- `table` (required): Table name to describe
 
-**Output:** Column names, types, nullable, keys
+**Output:** Column names, data types, nullability, key information
 
-### Tool 4 -- execute_query
+### Tool 4 -- execute_query ✅
 
 Runs a SELECT query and returns results.
 
 **Purpose:** Let Claude retrieve specific data
 
-**Input:** SQL SELECT statement (read-only)
+**Inputs:**
+- `query` (required): SQL SELECT statement with schema prefix (e.g., `SELECT * FROM mes_lite.work_orders LIMIT 10`)
 
-**Output:** Query results as structured data
+**Output:** Query results as structured data (max 1000 rows)
 
-### Safety Considerations
+### Safety Features Implemented
 
-- Only allow SELECT statements
-- Validate schema/table names against allowlist
-- Limit result set size (e.g., max 1000 rows)
-- Log all queries for audit
+| Feature | Status |
+|---------|--------|
+| SELECT-only queries | ✅ Validates query starts with SELECT |
+| Dangerous keyword blocking | ✅ Blocks INSERT, UPDATE, DELETE, DROP, etc. |
+| Schema allowlist | ✅ Validates against MYSQL_SCHEMAS env var |
+| Identifier validation | ✅ Regex validation for schema/table names |
+| Row limit | ✅ Max 1000 rows returned |
+| Query logging | ✅ All queries logged for audit |
 
 ---
 
@@ -232,10 +253,10 @@ Key insight -- Good tool descriptions make routing automatic.
 
 By the end of this section, you have:
 
-- [ ] A second MCP server connected to MySQL
-- [ ] Tools for exploring schemas and tables
-- [ ] Safe, read-only query execution
-- [ ] Claude Desktop configured for multiple servers
+- [x] A second MCP server connected to MySQL
+- [x] Tools for exploring schemas and tables (list_schemas, list_tables, describe_table)
+- [x] Safe, read-only query execution (execute_query)
+- [x] Claude Desktop configured for multiple servers
 - [ ] Demonstrated cross-server natural language queries
 
 **Next:** Build practical industrial dashboards using both servers

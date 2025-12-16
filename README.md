@@ -91,13 +91,19 @@ Build a Python MCP server that connects to the Flexible Packager Unified Namespa
 - `search_topics` - Search topics by pattern
 - `publish_message` - Publish messages to topics
 
-### Session 3: Multi-Server Architecture — Adding MySQL (11:00 - 11:45)
+### Session 3: Multi-Server Architecture — Adding MySQL (11:00 - 11:45) ✅
 
 **Guide:** [day1/mysql_server/README.md](day1/mysql_server/README.md)
 
-**Status:** Not started
+**Status:** Complete
 
 Add a second MCP server for relational database access. Configure Claude Desktop for multiple servers and demonstrate cross-server queries.
+
+**Tools Implemented:**
+- `list_schemas` - Discover available databases
+- `list_tables` - List tables with row counts
+- `describe_table` - Get column definitions
+- `execute_query` - Run read-only SELECT queries
 
 ### Session 4: Practical Industrial Use Cases (12:00 - 12:45)
 
