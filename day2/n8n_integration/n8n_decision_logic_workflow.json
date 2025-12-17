@@ -1,0 +1,237 @@
+{
+  "name": "Press 103 - Decision Logic (Exercise 2)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trigger-1",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://host.docker.internal:8002/equipment/status",
+        "options": {}
+      },
+      "id": "http-status",
+      "name": "Get Equipment Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 0]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://host.docker.internal:8002/oee/summary",
+        "options": {}
+      },
+      "id": "http-oee",
+      "name": "Get OEE",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 0]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://host.docker.internal:8002/workorder/active",
+        "options": {}
+      },
+      "id": "http-workorder",
+      "name": "Get Work Order",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 0]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Get OEE').item.json.availability }}",
+                    "rightValue": 0.5,
+                    "operator": {
+                      "type": "number",
+                      "operation": "lt"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Low Availability"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Get OEE').item.json.availability }}",
+                    "rightValue": 0.5,
+                    "operator": {
+                      "type": "number",
+                      "operation": "gte"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Normal"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "switch-availability",
+      "name": "Check Availability",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [880, 0]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// LOW AVAILABILITY ALERT PATH\nconst status = $('Get Equipment Status').first().json;\nconst oee = $('Get OEE').first().json;\nconst workOrder = $('Get Work Order').first().json;\n\nconst availPct = (oee.availability * 100).toFixed(1);\nconst oeePct = (oee.oee * 100).toFixed(1);\n\nconst message = `🚨 LOW AVAILABILITY ALERT: Press 103 availability at ${availPct}% (threshold: 50%). ` +\n  `Status: ${status.running ? 'RUNNING' : 'STOPPED'} | OEE: ${oeePct}% | ` +\n  `Work Order ${workOrder.work_order || 'N/A'}: ${workOrder.percent_complete}% complete. ` +\n  `IMMEDIATE ATTENTION REQUIRED - Investigate downtime causes.`;\n\nreturn [{\n  json: {\n    message: message,\n    category: 'availability-alert',\n    priority: 'HIGH',\n    availability: oee.availability\n  }\n}];"
+      },
+      "id": "code-low-avail",
+      "name": "Low Availability Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, -100]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// NORMAL STATUS PATH\nconst status = $('Get Equipment Status').first().json;\nconst oee = $('Get OEE').first().json;\nconst workOrder = $('Get Work Order').first().json;\n\nconst availPct = (oee.availability * 100).toFixed(1);\nconst perfPct = (oee.performance * 100).toFixed(1);\nconst qualPct = (oee.quality * 100).toFixed(1);\nconst oeePct = (oee.oee * 100).toFixed(1);\n\nconst message = `✅ Shift Status: Press 103 is ${status.running ? 'RUNNING' : 'STOPPED'} (state: ${status.state}). ` +\n  `OEE: ${oeePct}% (A: ${availPct}%, P: ${perfPct}%, Q: ${qualPct}%). ` +\n  `Work Order ${workOrder.work_order || 'N/A'}: ${workOrder.percent_complete}% complete ` +\n  `(${workOrder.good_count} good, ${workOrder.remaining} remaining). All systems nominal.`;\n\nreturn [{\n  json: {\n    message: message,\n    category: 'shift-status',\n    priority: 'NORMAL',\n    availability: oee.availability\n  }\n}];"
+      },
+      "id": "code-normal",
+      "name": "Normal Status Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8002/observation",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"message\": {{ JSON.stringify($json.message) }},\n  \"category\": {{ JSON.stringify($json.category) }}\n}",
+        "options": {}
+      },
+      "id": "http-post",
+      "name": "Post Observation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1320, 0]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Equipment Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Equipment Status": {
+      "main": [
+        [
+          {
+            "node": "Get OEE",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get OEE": {
+      "main": [
+        [
+          {
+            "node": "Get Work Order",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Work Order": {
+      "main": [
+        [
+          {
+            "node": "Check Availability",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Availability": {
+      "main": [
+        [
+          {
+            "node": "Low Availability Message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normal Status Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Low Availability Message": {
+      "main": [
+        [
+          {
+            "node": "Post Observation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normal Status Message": {
+      "main": [
+        [
+          {
+            "node": "Post Observation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "pinData": {}
+}

@@ -348,7 +348,15 @@ With Docker, Portainer, and N8N running, you're ready to:
 2. Build A2A agents with existing MCP servers (Session 2)
 3. Orchestrate agents with N8N workflows (Session 3)
 
-Your A2A agents will run on localhost ports (e.g., 8001, 8002) and N8N will call them via HTTP requests.
+Your A2A agents will run on localhost ports:
+- **Production Agent (A2A):** http://localhost:8001
+- **MES HTTP Server (N8N):** http://localhost:8002
+
+Use the startup script from the project root:
+```bash
+cd /path/to/MCP_A2A_Workshop
+./start_servers.sh
+```
 
 ---
 

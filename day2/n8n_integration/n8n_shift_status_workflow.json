@@ -12,7 +12,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "http://host.docker.internal:8001/equipment/status",
+        "url": "http://host.docker.internal:8002/equipment/status",
         "options": {}
       },
       "id": "http-status",
@@ -24,7 +24,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "http://host.docker.internal:8001/oee/summary",
+        "url": "http://host.docker.internal:8002/oee/summary",
         "options": {}
       },
       "id": "http-oee",
@@ -36,7 +36,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "http://host.docker.internal:8001/workorder/active",
+        "url": "http://host.docker.internal:8002/workorder/active",
         "options": {}
       },
       "id": "http-workorder",
@@ -59,7 +59,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://host.docker.internal:8001/observation",
+        "url": "http://host.docker.internal:8002/observation",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ $json }}",

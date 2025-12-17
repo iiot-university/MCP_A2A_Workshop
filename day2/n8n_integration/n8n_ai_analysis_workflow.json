@@ -1,0 +1,229 @@
+{
+  "name": "Press 103 - AI Analysis & Observation",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trigger-1",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://host.docker.internal:8002/equipment/status",
+        "options": {}
+      },
+      "id": "http-status",
+      "name": "Get Equipment Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 0]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://host.docker.internal:8002/oee/summary",
+        "options": {}
+      },
+      "id": "http-oee",
+      "name": "Get OEE",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 0]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://host.docker.internal:8002/workorder/active",
+        "options": {}
+      },
+      "id": "http-workorder",
+      "name": "Get Work Order",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 0]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://host.docker.internal:8002/downtime/summary?hours_back=24",
+        "options": {}
+      },
+      "id": "http-downtime",
+      "name": "Get Downtime",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 0]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Gather all data from previous nodes\nconst status = $('Get Equipment Status').first().json;\nconst oee = $('Get OEE').first().json;\nconst workOrder = $('Get Work Order').first().json;\nconst downtime = $('Get Downtime').first().json;\n\n// Build the prompt for Claude\nconst prompt = `You are a manufacturing operations analyst for Press 103, a flexible packaging line.\n\nAnalyze the following real-time data and provide a brief, actionable observation for the shift supervisor.\n\n## Current Equipment Status\n- Running: ${status.running}\n- State Code: ${status.state}\n- Speed: ${status.speed} / ${status.setpoint} (${status.speed_percent.toFixed(1)}% of setpoint)\n- Current Shift: ${status.shift}\n\n## OEE Metrics\n- Overall OEE: ${(oee.oee * 100).toFixed(1)}%\n- Availability: ${(oee.availability * 100).toFixed(1)}%\n- Performance: ${(oee.performance * 100).toFixed(1)}%\n- Quality: ${(oee.quality * 100).toFixed(1)}%\n- Good Count: ${oee.good_count}\n- Bad Count: ${oee.bad_count}\n- Runtime: ${oee.runtime_minutes} minutes\n- Downtime: ${oee.downtime_minutes} minutes\n- Rating: ${oee.rating}\n\n## Active Work Order\n- Work Order: ${workOrder.work_order || 'N/A'}\n- Product Code: ${workOrder.product_code || 'N/A'}\n- Progress: ${workOrder.percent_complete}% complete\n- Good Count: ${workOrder.good_count} / Target: ${workOrder.target_count}\n- Remaining: ${workOrder.remaining}\n\n## Downtime Summary (Last 24 Hours)\n- Current State: ${downtime.current_state}\n- Is Running: ${downtime.is_running}\n- Total Downtime: ${downtime.total_downtime_minutes} minutes\n- Planned: ${downtime.planned_minutes} minutes\n- Unplanned: ${downtime.unplanned_minutes} minutes\n- Top Reasons: ${downtime.top_reasons.length > 0 ? downtime.top_reasons.map(r => r.reason + ' (' + r.minutes + ' min)').join(', ') : 'None recorded'}\n\n---\n\nProvide your analysis in this format:\n1. **Status Summary** (1 sentence): Current state of the line\n2. **Primary Concern** (1 sentence): The most critical issue to address\n3. **Recommended Action** (1 sentence): Specific action for the supervisor to take\n4. **Priority Level**: CRITICAL, HIGH, MEDIUM, or LOW\n\nKeep your response concise and actionable. Focus on what the supervisor should DO, not just what the data shows.`;\n\nreturn [{\n  json: {\n    prompt: prompt,\n    raw_data: {\n      status: status,\n      oee: oee,\n      workOrder: workOrder,\n      downtime: downtime\n    }\n  }\n}];"
+      },
+      "id": "code-prepare",
+      "name": "Prepare AI Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $env.ANTHROPIC_API_KEY }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-20250514\",\n  \"max_tokens\": 500,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify($json.prompt) }}\n    }\n  ]\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "http-claude",
+      "name": "Claude Analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1320, 0]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Get Claude's response\nconst claudeResponse = $('Claude Analysis').first().json;\nconst rawData = $('Prepare AI Prompt').first().json.raw_data;\n\n// Extract the text content from Claude's response\nlet analysis = '';\ntry {\n  if (claudeResponse.content && claudeResponse.content.length > 0) {\n    analysis = claudeResponse.content[0].text;\n  } else {\n    analysis = 'AI analysis unavailable';\n  }\n} catch (e) {\n  analysis = 'Error parsing AI response: ' + e.message;\n}\n\n// Build the final observation message\nconst timestamp = new Date().toISOString();\nconst status = rawData.status;\nconst oee = rawData.oee;\n\nconst message = `[AI SHIFT ANALYSIS - ${timestamp}]\\n\\n` +\n  `Equipment: Press 103 | Shift: ${status.shift} | Status: ${status.running ? 'RUNNING' : 'STOPPED'}\\n` +\n  `OEE: ${(oee.oee * 100).toFixed(1)}% (A: ${(oee.availability * 100).toFixed(1)}% | P: ${(oee.performance * 100).toFixed(1)}% | Q: ${(oee.quality * 100).toFixed(1)}%)\\n\\n` +\n  `--- AI ANALYSIS ---\\n${analysis}`;\n\nreturn [{\n  json: {\n    message: message,\n    category: 'ai-shift-analysis',\n    ai_response: analysis,\n    raw_data: rawData\n  }\n}];"
+      },
+      "id": "code-format",
+      "name": "Format Observation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1540, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8002/observation",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"message\": {{ JSON.stringify($json.message) }},\n  \"category\": {{ JSON.stringify($json.category) }}\n}",
+        "options": {}
+      },
+      "id": "http-post",
+      "name": "Post Observation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1760, 0]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Equipment Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Equipment Status": {
+      "main": [
+        [
+          {
+            "node": "Get OEE",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get OEE": {
+      "main": [
+        [
+          {
+            "node": "Get Work Order",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Work Order": {
+      "main": [
+        [
+          {
+            "node": "Get Downtime",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Downtime": {
+      "main": [
+        [
+          {
+            "node": "Prepare AI Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare AI Prompt": {
+      "main": [
+        [
+          {
+            "node": "Claude Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Analysis": {
+      "main": [
+        [
+          {
+            "node": "Format Observation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Observation": {
+      "main": [
+        [
+          {
+            "node": "Post Observation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "pinData": {}
+}
