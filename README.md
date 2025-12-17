@@ -9,7 +9,7 @@ A hands-on workshop for engineers, integrators, and digital transformation profe
 ## 🎯 Workshop Status
 
 **Day 1:** ✅ **COMPLETE** - All sessions finished, code tested and published  
-**Day 2:** 🚧 **UPCOMING** - Starting soon
+**Day 2:** ✅ **COMPLETE** - Production Agent A2A Server implemented and tested
 
 ---
 
@@ -18,15 +18,24 @@ A hands-on workshop for engineers, integrators, and digital transformation profe
 | Day | Topic | Focus | Status |
 |-----|-------|-------|--------|
 | Day 1 | Advanced MCP | Multi-server architectures connecting AI to industrial data | ✅ Complete |
-| Day 2 | Agent2Agent | Collaborative intelligence with coordinating AI agents | 🚧 Coming Soon |
+| Day 2 | Agent2Agent | A2A protocol implementation for Press 103 production data | ✅ Complete |
 
-### What We Built on Day 1
+### What We Built
 
+**Day 1 - Advanced MCP:**
 - **3 MCP Servers:** MQTT (UNS), MySQL (MES Database), and domain-specific MES server
 - **Multi-server architecture** enabling Claude to query both real-time and historical data
 - **Domain-specific tooling** for manufacturing operations (OEE, work orders, downtime analysis)
 - **React dashboard** with real-time monitoring and AI-powered recommendations
 - **Write capabilities** allowing AI agents to log observations back to the UNS
+
+**Day 2 - Agent2Agent:**
+- **Production Agent** - FastAPI server implementing A2A protocol for Press 103
+- **Agent Card discovery** enabling standardized agent capability advertisement
+- **Message-based routing** with intelligent keyword-based skill selection
+- **HTTP-accessible skills** for browser testing and web integration
+- **Task storage system** with UUID-based retrieval
+- **Production-ready architecture** with MQTT caching and MySQL pooling
 
 ---
 
@@ -44,12 +53,14 @@ By completing this workshop, participants will be able to:
 - ✅ Generate industrial dashboards from natural language prompts
 - ✅ Integrate Claude API into web applications
 
-### Day 2 Outcomes (Coming Soon)
-- 🚧 Design specialized AI agents for different domains
-- 🚧 Implement agent-to-agent communication protocols
-- 🚧 Orchestrate workflows across multiple agents
-- 🚧 Apply the A2A protocol to industrial scenarios
-- 🚧 Build collaborative intelligence systems
+### Day 2 Outcomes ✅
+- ✅ Understand the A2A (Agent-to-Agent) protocol specification
+- ✅ Build FastAPI servers implementing A2A endpoints
+- ✅ Transform MCP tools into A2A-compliant skills
+- ✅ Implement Agent Card discovery mechanism
+- ✅ Create browser-accessible manufacturing data APIs
+- ✅ Design message routing and skill execution patterns
+- ✅ Build production-ready agent architecture with proper error handling
 
 ---
 
@@ -74,7 +85,7 @@ cp .env.example .env
 Each session has its own README with step-by-step instructions.
 
 **Day 1:** Start with [day1/mqtt_server/README.md](day1/mqtt_server/README.md)  
-**Day 2:** Coming soon
+**Day 2:** Start with [day2/production_agent/README.md](day2/production_agent/README.md)
 
 ---
 
@@ -109,8 +120,15 @@ MCP_A2A_Workshop/
 │   └── use_cases/          # Session 4: Documentation
 │       └── README.md       # Session guide and use cases
 │
-└── day2/                   # Agent2Agent - Collaborative Intelligence
-    └── (Day 2 content - coming soon)
+└── day2/                   # Agent2Agent - A2A Protocol Implementation
+    ├── production_agent/   # Session 2: Production Agent A2A Server
+    │   ├── README.md       # Complete specification & testing guide
+    │   ├── requirements.txt
+    │   └── src/
+    │       └── production_agent.py  # FastAPI A2A server
+    │
+    └── setup/              # Session 1: Setup guide
+        └── README.md       # Environment configuration
 ```
 
 ---
@@ -198,18 +216,93 @@ Built a domain-specific MES MCP server for Press 103 that combines MQTT and MySQ
 
 ---
 
-## Day 2: Agent2Agent - Collaborative Intelligence (Coming Soon)
+## Day 2: Agent2Agent - A2A Protocol Implementation ✅ COMPLETE
 
-**Focus:** Building coordinating AI agents that work together using the Agent2Agent protocol.
+**Status:** Production Agent built, tested, and documented.
 
-**Planned Topics:**
-- Agent specialization (Production, Quality, Maintenance agents)
-- Agent-to-agent communication patterns
-- Workflow orchestration across multiple agents
-- The A2A protocol for industrial automation
-- Collaborative intelligence in manufacturing
+**Focus:** Building HTTP-accessible A2A agents that expose manufacturing data through standardized endpoints.
 
-**Prerequisites:** Completion of Day 1 (all three MCP servers)
+### Session 1: Introduction to A2A Protocol ✅
+
+Instructor-led introduction covering:
+- The Agent-to-Agent protocol specification
+- Differences between MCP (stdio) and A2A (HTTP)
+- Agent Card discovery mechanism
+- Message routing and skill execution patterns
+- When to use A2A vs MCP
+
+### Session 2: Building the Production Agent ✅
+
+**Guide:** [day2/production_agent/README.md](day2/production_agent/README.md)
+
+**Status:** Complete and tested
+
+Built a FastAPI server implementing the A2A protocol for Press 103 manufacturing data. This agent transforms the Day 1 MES MCP server into an HTTP-accessible A2A-compliant agent.
+
+**A2A Endpoints Implemented:**
+- `GET /.well-known/agent.json` - Agent Card discovery
+- `POST /a2a/message/send` - Natural language message routing
+- `GET /a2a/tasks/{task_id}` - Task result retrieval
+- `GET /health` - Connection status
+
+**Direct Skill Endpoints (Browser-Friendly):**
+- `GET /a2a/skills/get_equipment_status` - Running state, speed, shift
+- `GET /a2a/skills/get_oee_summary` - OEE breakdown with ratings
+- `GET /a2a/skills/get_downtime_summary` - Historical downtime analysis
+
+**Key Features:**
+- Intelligent keyword-based message routing
+- Task-based response pattern with artifacts
+- MQTT caching for real-time UNS data
+- MySQL connection pooling for historical queries
+- CORS enabled for browser/Claude Desktop access
+- Production-ready error handling and logging
+
+**Architecture:**
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Production Agent (FastAPI on :8001)                        │
+│  ┌───────────────┐  ┌───────────────┐  ┌─────────────────┐ │
+│  │ Agent Card    │  │ Message Router│  │ Direct Skills   │ │
+│  │ Discovery     │  │ (Keywords)    │  │ (Browser Access)│ │
+│  └───────────────┘  └───────────────┘  └─────────────────┘ │
+│         ↓                  ↓                    ↓           │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │          Skill Execution Layer                        │  │
+│  │  • get_equipment_status • get_oee_summary             │  │
+│  │  • get_downtime_summary                               │  │
+│  └──────────────────────────────────────────────────────┘  │
+│         ↓                                 ↓                 │
+│  ┌─────────────┐                  ┌─────────────────┐      │
+│  │ MQTT Client │                  │ MySQL Pool      │      │
+│  │ (UNS Cache) │                  │ (Historical)    │      │
+│  └─────────────┘                  └─────────────────┘      │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Day 2 Achievements
+
+✅ Production Agent A2A server (FastAPI on port 8001)  
+✅ A2A protocol compliance with Agent Card discovery  
+✅ Message-based interaction with intelligent routing  
+✅ Three production-ready skills exposing Press 103 data  
+✅ Browser-accessible direct skill endpoints  
+✅ Task storage and retrieval system  
+✅ Production architecture with proper error handling
+
+### Comparison: MCP vs A2A
+
+| Feature | Day 1 MES MCP Server | Day 2 Production Agent |
+|---------|---------------------|------------------------|
+| Protocol | MCP (stdio) | A2A (HTTP) |
+| Client | Claude Desktop only | Any HTTP client (browser, curl, Claude) |
+| Discovery | Tool list | Agent Card (/.well-known/agent.json) |
+| Interaction | Tool calls | Message routing or direct skill access |
+| Response | TextContent | Task with JSON artifacts |
+| Port | N/A (stdio) | 8001 (HTTP) |
+| Use Case | Desktop AI assistant | Web-accessible agent services |
+
+**Prerequisites:** Completion of Day 1 (understanding of MES data and Press 103)
 
 ---
 
@@ -302,8 +395,8 @@ When building code for this workshop:
 
 **Public:** https://github.com/iiot-university/MCP_A2A_Workshop
 
-**Day 1 Status:** ✅ Complete - All code published and tested  
-**Day 2 Status:** 🚧 In development
+**Day 1 Status:** ✅ Complete - All MCP servers published and tested  
+**Day 2 Status:** ✅ Complete - Production Agent A2A server published and tested
 
 Students can clone the repository to access:
 - Complete Day 1 implementation (MQTT, MySQL, MES servers)
@@ -373,14 +466,93 @@ For deploying these servers in production:
 - [ ] Set up log aggregation
 - [ ] Implement health checks
 
-### Next Steps (Day 2)
+### Future Enhancements
 
-Building on Day 1's foundation:
-- Specialized agents (Production, Quality, Maintenance)
-- Agent-to-agent communication protocols
-- Workflow orchestration across agents
-- The A2A protocol implementation
-- Collaborative intelligence patterns
+Potential extensions beyond the workshop:
+- Additional specialized agents (Quality, Maintenance, Scheduling)
+- Agent-to-agent communication and coordination
+- Workflow orchestration across multiple agents
+- Real-time notifications and streaming updates
+- Authentication and authorization for production deployment
+- Integration with Claude API for autonomous operation
+
+---
+
+## Day 2 Summary & Lessons Learned
+
+### Technical Achievements
+
+**Architecture:**
+- Successfully implemented A2A protocol in FastAPI
+- Demonstrated MCP-to-A2A transformation pattern
+- Browser-accessible manufacturing data APIs
+- Dual access pattern: message-based + direct skills
+
+**Implementation:**
+- FastAPI server with 7 endpoints (3 A2A + 3 skills + 1 health)
+- Intelligent keyword-based message routing
+- Task storage system with UUID-based retrieval
+- Reused Day 1 MQTT and MySQL patterns
+- Production-ready error handling throughout
+
+**Protocol Compliance:**
+- Agent Card discovery at `/.well-known/agent.json`
+- Message request/response with Pydantic models
+- Task-based response pattern with artifacts
+- CORS enabled for cross-origin access
+
+### Key Insights
+
+1. **A2A Enables Broader Access**
+   - HTTP-based protocol accessible from any client
+   - Browser testing without special tools
+   - Suitable for web integrations and dashboards
+   - Claude Desktop can still consume via HTTP
+
+2. **Message Routing is Powerful**
+   - Natural language queries route to appropriate skills
+   - Keyword patterns enable intelligent dispatch
+   - Reduces need for explicit tool selection
+   - More user-friendly than direct tool calls
+
+3. **Dual Access Pattern Works Well**
+   - Message routing for natural language interaction
+   - Direct skill endpoints for programmatic access
+   - Browser-friendly JSON responses
+   - Query parameters for customization
+
+4. **MCP → A2A Transformation is Straightforward**
+   - Skills map directly to MCP tools
+   - Data layer (MQTT/MySQL) remains unchanged
+   - Main changes: protocol wrapper and routing logic
+   - Code reuse from Day 1 saves time
+
+### Production Deployment Considerations
+
+For deploying the Production Agent in production:
+
+- [ ] Add API authentication (API keys, OAuth, etc.)
+- [ ] Implement rate limiting per client
+- [ ] Add request/response logging and auditing
+- [ ] Set up monitoring and health checks
+- [ ] Deploy with proper process manager (systemd, PM2)
+- [ ] Configure reverse proxy (nginx) with SSL
+- [ ] Implement caching strategy for frequent queries
+- [ ] Add graceful shutdown handling
+- [ ] Document API with OpenAPI/Swagger
+- [ ] Create deployment automation (Docker, K8s)
+
+### Comparison with Day 1
+
+| Aspect | Day 1 (MCP) | Day 2 (A2A) |
+|--------|-------------|-------------|
+| **Transport** | stdio | HTTP |
+| **Discovery** | Tool list | Agent Card |
+| **Client** | Claude Desktop | Any HTTP client |
+| **Response** | TextContent | JSON with artifacts |
+| **Testing** | Claude only | Browser, curl, Postman |
+| **Deployment** | Desktop only | Web servers, cloud |
+| **Use Case** | AI assistant integration | Web APIs, dashboards |
 
 ---
 
@@ -427,4 +599,4 @@ Special thanks to:
 - Anthropic for the MCP protocol and Claude API
 - All workshop participants and contributors
 
-**Day 1 Complete!** ✅ Ready for Day 2.
+**Workshop Complete!** ✅ Both Day 1 (MCP) and Day 2 (A2A) finished and tested.
