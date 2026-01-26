@@ -38,6 +38,18 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 
+# Add project root to path for shared module imports
+_project_root = Path(__file__).parent.parent.parent.parent
+sys.path.insert(0, str(_project_root))
+
+try:
+    from shared.agent_telemetry import AgentTelemetry
+    TELEMETRY_AVAILABLE = True
+except ImportError as e:
+    TELEMETRY_AVAILABLE = False
+    AgentTelemetry = None
+    # Will log warning after logger is configured
+
 # Configure logging to stderr (stdout reserved for MCP protocol)
 logging.basicConfig(
     level=logging.INFO,
@@ -45,6 +57,12 @@ logging.basicConfig(
     stream=sys.stderr,
 )
 logger = logging.getLogger("mqtt-mcp-server")
+
+# Log telemetry availability
+if TELEMETRY_AVAILABLE:
+    logger.info("AgentTelemetry module loaded successfully")
+else:
+    logger.warning("AgentTelemetry module not available - agent state will not be published to UNS")
 
 # Load environment variables from .env file (two directories up from src/)
 env_path = Path(__file__).parent.parent.parent.parent / ".env"
@@ -398,6 +416,20 @@ mqtt_client = MQTTClientWrapper()
 # Create MCP server instance
 server = Server("mqtt-uns")
 
+# Telemetry for UNS visibility
+if TELEMETRY_AVAILABLE:
+    telemetry = AgentTelemetry(
+        agent_id="mqtt-uns",
+        agent_type="mcp",
+        name="MQTT MCP Server - UNS Interface",
+        version="1.0.0",
+        description="Generic MQTT/UNS access server for reading and writing topics",
+        tools=["list_uns_topics", "get_topic_value", "search_topics", "publish_message"],
+        capabilities=["mqtt"],
+    )
+else:
+    telemetry = None
+
 
 @server.list_tools()
 async def list_tools() -> list[Tool]:
@@ -521,8 +553,16 @@ async def list_tools() -> list[Tool]:
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
-    """Handle tool calls."""
+    """Handle tool calls with telemetry tracking."""
+    if telemetry:
+        with telemetry.track_tool(name):
+            return await _route_tool(name, arguments)
+    else:
+        return await _route_tool(name, arguments)
 
+
+async def _route_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
+    """Route tool calls to handlers."""
     if name == "list_uns_topics":
         return await handle_list_uns_topics(arguments)
     elif name == "get_topic_value":
@@ -804,8 +844,17 @@ async def main():
     logger.info(f"Cache file: {CACHE_FILE}")
 
     # Connect to MQTT broker
-    if not mqtt_client.connect():
+    mqtt_connected = mqtt_client.connect()
+    if not mqtt_connected:
         logger.error("Failed to connect to MQTT broker. Server will start but tools may fail.")
+
+    # Start telemetry (publishes to UNS)
+    if telemetry:
+        telemetry.start()
+        telemetry.update_status(mqtt=mqtt_connected)
+        logger.info("Telemetry started and publishing to UNS")
+    else:
+        logger.warning("Telemetry not available - agent state will not be published to UNS")
 
     try:
         # Run the MCP server with stdio transport
@@ -817,7 +866,9 @@ async def main():
                 server.create_initialization_options(),
             )
     finally:
-        # Clean up MQTT connection
+        # Clean up
+        if telemetry:
+            telemetry.stop()
         mqtt_client.disconnect()
 
 

@@ -40,6 +40,18 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 
+# Add project root to path for shared module imports
+_project_root = Path(__file__).parent.parent.parent.parent
+sys.path.insert(0, str(_project_root))
+
+try:
+    from shared.agent_telemetry import AgentTelemetry
+    TELEMETRY_AVAILABLE = True
+except ImportError as e:
+    TELEMETRY_AVAILABLE = False
+    AgentTelemetry = None
+    # Will log warning after logger is configured
+
 # =============================================================================
 # LOGGING CONFIGURATION
 # =============================================================================
@@ -50,6 +62,12 @@ logging.basicConfig(
     stream=sys.stderr,
 )
 logger = logging.getLogger("mes-mcp-server")
+
+# Log telemetry availability
+if TELEMETRY_AVAILABLE:
+    logger.info("AgentTelemetry module loaded successfully")
+else:
+    logger.warning("AgentTelemetry module not available - agent state will not be published to UNS")
 
 # =============================================================================
 # ENVIRONMENT LOADING
@@ -365,6 +383,20 @@ class MQTTClientWrapper:
 mqtt_client = MQTTClientWrapper()
 server = Server("mes-press103")
 
+# Telemetry for UNS visibility
+if TELEMETRY_AVAILABLE:
+    telemetry = AgentTelemetry(
+        agent_id="mes-press103",
+        agent_type="mcp",
+        name="MES MCP Server - Press 103",
+        version="1.0.0",
+        description="Domain-specific MES server for Press 103 equipment monitoring",
+        tools=["get_equipment_status", "get_active_work_order", "get_oee_summary", "get_downtime_summary", "log_observation"],
+        capabilities=["mqtt", "mysql"],
+    )
+else:
+    telemetry = None
+
 
 # =============================================================================
 # HELPER FUNCTIONS
@@ -500,6 +532,16 @@ async def list_tools() -> list[Tool]:
 # =============================================================================
 @server.call_tool()
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
+    """Route tool calls to handlers with telemetry tracking."""
+    # Use telemetry context manager if available, otherwise just call directly
+    if telemetry:
+        with telemetry.track_tool(name):
+            return await _route_tool(name, arguments)
+    else:
+        return await _route_tool(name, arguments)
+
+
+async def _route_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     """Route tool calls to handlers."""
     if name == "get_equipment_status":
         return await handle_get_equipment_status(arguments)
@@ -845,12 +887,22 @@ async def main():
     logger.info(f"UNS Base: {PRESS_103_UNS_BASE}")
 
     # Initialize MySQL connection pool
-    if not init_db_pool():
+    mysql_connected = init_db_pool()
+    if not mysql_connected:
         logger.warning("MySQL connection pool failed. Database tools may not work.")
 
     # Connect to MQTT broker
-    if not mqtt_client.connect():
+    mqtt_connected = mqtt_client.connect()
+    if not mqtt_connected:
         logger.warning("MQTT connection failed. UNS tools may not work.")
+
+    # Start telemetry (publishes to UNS)
+    if telemetry:
+        telemetry.start()
+        telemetry.update_status(mqtt=mqtt_connected, mysql=mysql_connected)
+        logger.info("Telemetry started and publishing to UNS")
+    else:
+        logger.warning("Telemetry not available - agent state will not be published to UNS")
 
     try:
         # Run the MCP server with stdio transport
@@ -863,6 +915,8 @@ async def main():
             )
     finally:
         # Clean up
+        if telemetry:
+            telemetry.stop()
         mqtt_client.disconnect()
         logger.info("MES MCP Server shutdown complete")
 

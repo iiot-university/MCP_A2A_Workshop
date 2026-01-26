@@ -27,6 +27,18 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 
+# Add project root to path for shared module imports
+_project_root = Path(__file__).parent.parent.parent.parent
+sys.path.insert(0, str(_project_root))
+
+try:
+    from shared.agent_telemetry import AgentTelemetry
+    TELEMETRY_AVAILABLE = True
+except ImportError as e:
+    TELEMETRY_AVAILABLE = False
+    AgentTelemetry = None
+    # Will log warning after logger is configured
+
 # Configure logging to stderr (stdout reserved for MCP protocol)
 logging.basicConfig(
     level=logging.INFO,
@@ -34,6 +46,12 @@ logging.basicConfig(
     stream=sys.stderr,
 )
 logger = logging.getLogger("mysql-mcp-server")
+
+# Log telemetry availability
+if TELEMETRY_AVAILABLE:
+    logger.info("AgentTelemetry module loaded successfully")
+else:
+    logger.warning("AgentTelemetry module not available - agent state will not be published to UNS")
 
 # Load environment variables from .env file (two directories up from src/)
 env_path = Path(__file__).parent.parent.parent.parent / ".env"
@@ -237,6 +255,20 @@ mysql_client = MySQLClientWrapper()
 # Create MCP server instance
 server = Server("mysql-mes")
 
+# Telemetry for UNS visibility
+if TELEMETRY_AVAILABLE:
+    telemetry = AgentTelemetry(
+        agent_id="mysql-mes",
+        agent_type="mcp",
+        name="MySQL MCP Server - MES Database",
+        version="1.0.0",
+        description="Read-only MySQL access for MES database schemas",
+        tools=["list_schemas", "list_tables", "describe_table", "execute_query"],
+        capabilities=["mysql"],
+    )
+else:
+    telemetry = None
+
 
 @server.list_tools()
 async def list_tools() -> list[Tool]:
@@ -326,8 +358,16 @@ async def list_tools() -> list[Tool]:
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
-    """Handle tool calls."""
+    """Handle tool calls with telemetry tracking."""
+    if telemetry:
+        with telemetry.track_tool(name):
+            return await _route_tool(name, arguments)
+    else:
+        return await _route_tool(name, arguments)
 
+
+async def _route_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
+    """Route tool calls to handlers."""
     if name == "list_schemas":
         return await handle_list_schemas(arguments)
     elif name == "list_tables":
@@ -524,6 +564,22 @@ async def main():
     if not ALLOWED_SCHEMAS:
         logger.warning("No schemas configured! Set MYSQL_SCHEMAS in .env file.")
 
+    # Test MySQL connection for telemetry status
+    mysql_connected = False
+    try:
+        mysql_client._get_connection()
+        mysql_connected = True
+    except Exception as e:
+        logger.warning(f"Initial MySQL connection test failed: {e}")
+
+    # Start telemetry (publishes to UNS)
+    if telemetry:
+        telemetry.start()
+        telemetry.update_status(mysql=mysql_connected)
+        logger.info("Telemetry started and publishing to UNS")
+    else:
+        logger.warning("Telemetry not available - agent state will not be published to UNS")
+
     try:
         # Run the MCP server with stdio transport
         async with stdio_server() as (read_stream, write_stream):
@@ -534,7 +590,9 @@ async def main():
                 server.create_initialization_options(),
             )
     finally:
-        # Clean up MySQL connection
+        # Clean up
+        if telemetry:
+            telemetry.stop()
         mysql_client.close()
 
 
