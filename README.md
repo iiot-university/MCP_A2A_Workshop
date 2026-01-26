@@ -17,6 +17,30 @@ A hands-on 2-day workshop for engineers, integrators, and digital transformation
 
 ---
 
+## New Feature: Agent Telemetry
+
+All servers now publish their state to the UNS in real-time. View active agents, tool invocations, and health status at:
+
+```
+Enterprise/Dallas/Agents/
+├── mqtt-uns/         # MQTT MCP Server telemetry
+├── mysql-mes/        # MySQL MCP Server telemetry
+├── mes-press103/     # MES MCP Server telemetry
+├── production-agent/ # Production Agent (A2A) telemetry
+└── mes-http/         # MES HTTP Server telemetry
+```
+
+Each agent publishes:
+- **Identity** — Agent name, version, tools, capabilities
+- **Status** — Connection state, uptime, error counts
+- **Heartbeat** — Alive signal every 30 seconds
+- **Tools/{name}** — Invocation details (duration, success/fail)
+- **Activity** — Event stream (startup, shutdown, tool calls)
+
+See [shared/agent_telemetry/README.md](shared/agent_telemetry/README.md) for details.
+
+---
+
 ## Quick Start
 
 ### Prerequisites
@@ -81,6 +105,9 @@ open http://localhost:5678
 # Check MCP servers (in Claude Desktop)
 # Ask: "What topics are available in the UNS?"
 # Ask: "What is the current OEE for Press 103?"
+
+# Check agent telemetry (in MQTT Explorer or Claude Desktop)
+# Ask: "Show me the topics under Enterprise/Dallas/Agents"
 ```
 
 ### 5. Stop Everything
@@ -112,22 +139,28 @@ docker stop n8n
 MCP_A2A_Workshop/
 ├── .env                    # Credentials (gitignored)
 ├── .env.example            # Template for credentials
-├── start_servers.sh        # Start all HTTP servers
-├── stop_servers.sh         # Stop all servers
+├── start_servers.sh        # Start HTTP servers (auto-creates venvs)
+├── stop_servers.sh         # Stop all HTTP servers
 ├── README.md               # This file
 │
+├── shared/                 # Shared Python modules
+│   ├── __init__.py
+│   └── agent_telemetry/    # UNS telemetry publishing module
+│       ├── telemetry.py    # AgentTelemetry class
+│       └── README.md       # Integration guide
+│
 ├── day1/                   # Day 1: Advanced MCP
-│   ├── mqtt_server/        # Session 2: MQTT/UNS access
-│   ├── mysql_server/       # Session 3: MySQL access
-│   ├── mes_server/         # Session 4: Domain MES server
-│   └── use_cases/          # Session 4: Use case documentation
+│   ├── mqtt_server/        # MQTT/UNS MCP server
+│   ├── mysql_server/       # MySQL MCP server
+│   ├── mes_server/         # Domain MES MCP server (Press 103)
+│   └── use_cases/          # Use case documentation
 │
 ├── day2/                   # Day 2: Agent2Agent
 │   ├── setup/              # Docker/N8N setup guide
-│   ├── production_agent/   # Session 2: A2A Production Agent
-│   └── n8n_integration/    # Session 3: N8N workflows
+│   ├── production_agent/   # A2A Production Agent (port 8001)
+│   └── n8n_integration/    # MES HTTP Server + N8N workflows (port 8002)
 │
-└── logs/                   # Server logs (auto-created)
+└── logs/                   # HTTP server logs (auto-created)
 ```
 
 ---
@@ -235,10 +268,11 @@ All examples use the ProveIt! Conference virtual factory environments.
 
 ---
 
-## Action Items
+## Next Steps
 
-### Video Content
-- [ ] **A2A Agent Integration Video** — Document what was pulled from Day 2 Session 2-3 for standalone tutorial
+### Immediate
+- [x] Integrate telemetry into HTTP servers (Production Agent, MES HTTP Server)
+- [ ] Add tool invocation tracking visualization
 
 ### Day 3: Containerization & Production (January 2026)
 - [ ] Schedule session for first week of January
@@ -246,6 +280,12 @@ All examples use the ProveIt! Conference virtual factory environments.
 - [ ] Containerize A2A agents
 - [ ] Deploy to production infrastructure
 - [ ] CI/CD pipeline setup
+
+### Future Enhancements
+- [ ] Agent discovery service (query UNS for active agents)
+- [ ] Telemetry dashboard (real-time agent monitoring)
+- [ ] Alert rules (notify on agent failures or high error rates)
+- [ ] Historical telemetry storage (time-series database)
 
 ---
 

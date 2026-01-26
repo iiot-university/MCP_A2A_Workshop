@@ -59,6 +59,21 @@ load_dotenv(env_path)
 logger.info(f"Loading environment from: {env_path}")
 
 # =============================================================================
+# AGENT TELEMETRY (UNS Publishing)
+# =============================================================================
+_project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(_project_root))
+
+try:
+    from shared.agent_telemetry import AgentTelemetry
+    TELEMETRY_AVAILABLE = True
+    logger.info("Agent telemetry module loaded successfully")
+except ImportError as e:
+    TELEMETRY_AVAILABLE = False
+    AgentTelemetry = None
+    logger.warning(f"Agent telemetry not available: {e}")
+
+# =============================================================================
 # MQTT CONFIGURATION
 # =============================================================================
 MQTT_BROKER = os.getenv("MQTT_BROKER", "localhost")
@@ -394,28 +409,51 @@ app.add_middleware(
 # Global MQTT client
 mqtt_client: MQTTClientWrapper = None
 
+# Global telemetry instance
+telemetry = None
+
 @app.on_event("startup")
 async def startup_event():
     """Initialize connections on startup."""
-    global mqtt_client
+    global mqtt_client, telemetry
     
     logger.info("=" * 50)
     logger.info("Starting MES HTTP Server - Press 103")
     logger.info("=" * 50)
     
     # Initialize MySQL
-    if not init_db_pool():
+    mysql_connected = init_db_pool()
+    if not mysql_connected:
         logger.warning("MySQL connection pool failed")
     
     # Initialize MQTT
     mqtt_client = MQTTClientWrapper()
-    if not mqtt_client.connect():
+    mqtt_connected = mqtt_client.connect()
+    if not mqtt_connected:
         logger.warning("MQTT connection failed")
+    
+    # Initialize telemetry
+    if TELEMETRY_AVAILABLE:
+        telemetry = AgentTelemetry(
+            agent_id="mes-http",
+            agent_type="http",
+            name="MES HTTP Server - Press 103",
+            version="1.0.0",
+            tools=["get_equipment_status", "get_workorder", "get_oee_summary", "get_downtime_summary", "log_observation"],
+            capabilities=["mqtt", "mysql"],
+            description="HTTP API for Press 103 MES data (N8N integration)",
+        )
+        telemetry.start()
+        telemetry.update_status(mqtt=mqtt_connected, mysql=mysql_connected)
+        logger.info("Agent telemetry started - publishing to UNS")
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup on shutdown."""
-    global mqtt_client
+    global mqtt_client, telemetry
+    if telemetry:
+        telemetry.stop()
+        logger.info("Agent telemetry stopped")
     if mqtt_client:
         mqtt_client.disconnect()
     logger.info("MES HTTP Server shutdown complete")
@@ -436,190 +474,220 @@ async def health_check():
 @app.get("/equipment/status", response_model=EquipmentStatusResponse)
 async def get_equipment_status():
     """Get current operational status of Press 103."""
-    running = mqtt_client.get_topic_value(TOPIC_RUNNING)
-    state = mqtt_client.get_topic_value(TOPIC_STATE)
-    speed = safe_float(mqtt_client.get_topic_value(TOPIC_MACHINE_SPEED))
-    setpoint = safe_float(mqtt_client.get_topic_value(TOPIC_RATE_SETPOINT))
-    shift = mqtt_client.get_topic_value(TOPIC_SHIFT_NAME)
+    def _get_status():
+        running = mqtt_client.get_topic_value(TOPIC_RUNNING)
+        state = mqtt_client.get_topic_value(TOPIC_STATE)
+        speed = safe_float(mqtt_client.get_topic_value(TOPIC_MACHINE_SPEED))
+        setpoint = safe_float(mqtt_client.get_topic_value(TOPIC_RATE_SETPOINT))
+        shift = mqtt_client.get_topic_value(TOPIC_SHIFT_NAME)
 
-    is_running = str(running).lower() in ('true', '1', 'yes', 'running') if running else False
-    speed_pct = (speed / setpoint * 100) if setpoint > 0 else 0
+        is_running = str(running).lower() in ('true', '1', 'yes', 'running') if running else False
+        speed_pct = (speed / setpoint * 100) if setpoint > 0 else 0
 
-    return EquipmentStatusResponse(
-        running=is_running,
-        state=state,
-        speed=speed,
-        setpoint=setpoint,
-        speed_percent=speed_pct,
-        shift=shift,
-        mqtt_connected=mqtt_client.connected,
-    )
+        return EquipmentStatusResponse(
+            running=is_running,
+            state=state,
+            speed=speed,
+            setpoint=setpoint,
+            speed_percent=speed_pct,
+            shift=shift,
+            mqtt_connected=mqtt_client.connected,
+        )
+    
+    if telemetry:
+        with telemetry.track_tool("get_equipment_status"):
+            return _get_status()
+    return _get_status()
 
 @app.get("/workorder/active", response_model=WorkOrderResponse)
 async def get_active_work_order():
     """Get the currently active work order on Press 103."""
-    wo_number = mqtt_client.get_topic_value(TOPIC_WORK_ORDER)
-    good_count = safe_int(mqtt_client.get_topic_value(TOPIC_GOOD_COUNT))
-    target_count = safe_int(mqtt_client.get_topic_value(TOPIC_TARGET_COUNT))
-    run_id = mqtt_client.get_topic_value(TOPIC_RUN_ID)
+    def _get_workorder():
+        wo_number = mqtt_client.get_topic_value(TOPIC_WORK_ORDER)
+        good_count = safe_int(mqtt_client.get_topic_value(TOPIC_GOOD_COUNT))
+        target_count = safe_int(mqtt_client.get_topic_value(TOPIC_TARGET_COUNT))
+        run_id = mqtt_client.get_topic_value(TOPIC_RUN_ID)
 
-    # Try to get product code from MySQL
-    product_code = None
-    if wo_number:
-        try:
-            query = """
-                SELECT w.ProductCode
-                FROM mes_lite.workorder w
-                WHERE w.WorkOrder = %s
-                LIMIT 1
-            """
-            results = execute_query(query, (wo_number,))
-            if results:
-                product_code = results[0].get('ProductCode')
-        except Exception as e:
-            logger.warning(f"Could not fetch work order details: {e}")
+        # Try to get product code from MySQL
+        product_code = None
+        if wo_number:
+            try:
+                query = """
+                    SELECT w.ProductCode
+                    FROM mes_lite.workorder w
+                    WHERE w.WorkOrder = %s
+                    LIMIT 1
+                """
+                results = execute_query(query, (wo_number,))
+                if results:
+                    product_code = results[0].get('ProductCode')
+            except Exception as e:
+                logger.warning(f"Could not fetch work order details: {e}")
 
-    remaining = max(0, target_count - good_count)
-    pct_complete = (good_count / target_count * 100) if target_count > 0 else 0
+        remaining = max(0, target_count - good_count)
+        pct_complete = (good_count / target_count * 100) if target_count > 0 else 0
 
-    return WorkOrderResponse(
-        work_order=wo_number,
-        product_code=product_code,
-        good_count=good_count,
-        target_count=target_count,
-        remaining=remaining,
-        percent_complete=round(pct_complete, 1),
-        run_id=run_id,
-    )
+        return WorkOrderResponse(
+            work_order=wo_number,
+            product_code=product_code,
+            good_count=good_count,
+            target_count=target_count,
+            remaining=remaining,
+            percent_complete=round(pct_complete, 1),
+            run_id=run_id,
+        )
+    
+    if telemetry:
+        with telemetry.track_tool("get_workorder"):
+            return _get_workorder()
+    return _get_workorder()
 
 @app.get("/oee/summary", response_model=OEEResponse)
 async def get_oee_summary():
     """Get OEE metrics for Press 103."""
-    oee = safe_float(mqtt_client.get_topic_value(TOPIC_OEE))
-    availability = safe_float(mqtt_client.get_topic_value(TOPIC_OEE_AVAILABILITY))
-    performance = safe_float(mqtt_client.get_topic_value(TOPIC_OEE_PERFORMANCE))
-    quality = safe_float(mqtt_client.get_topic_value(TOPIC_OEE_QUALITY))
-    good_count = safe_int(mqtt_client.get_topic_value(TOPIC_GOOD_COUNT))
-    bad_count = safe_int(mqtt_client.get_topic_value(TOPIC_BAD_COUNT))
-    runtime = safe_float(mqtt_client.get_topic_value(TOPIC_RUNTIME))
-    downtime = safe_float(mqtt_client.get_topic_value(TOPIC_UNPLANNED_DOWNTIME))
+    def _get_oee():
+        oee = safe_float(mqtt_client.get_topic_value(TOPIC_OEE))
+        availability = safe_float(mqtt_client.get_topic_value(TOPIC_OEE_AVAILABILITY))
+        performance = safe_float(mqtt_client.get_topic_value(TOPIC_OEE_PERFORMANCE))
+        quality = safe_float(mqtt_client.get_topic_value(TOPIC_OEE_QUALITY))
+        good_count = safe_int(mqtt_client.get_topic_value(TOPIC_GOOD_COUNT))
+        bad_count = safe_int(mqtt_client.get_topic_value(TOPIC_BAD_COUNT))
+        runtime = safe_float(mqtt_client.get_topic_value(TOPIC_RUNTIME))
+        downtime = safe_float(mqtt_client.get_topic_value(TOPIC_UNPLANNED_DOWNTIME))
 
-    total_count = good_count + bad_count
+        total_count = good_count + bad_count
 
-    if oee >= 85:
-        rating = "World Class"
-    elif oee >= 65:
-        rating = "Typical"
-    elif oee >= 40:
-        rating = "Below Average"
-    else:
-        rating = "Needs Improvement"
+        if oee >= 85:
+            rating = "World Class"
+        elif oee >= 65:
+            rating = "Typical"
+        elif oee >= 40:
+            rating = "Below Average"
+        else:
+            rating = "Needs Improvement"
 
-    return OEEResponse(
-        oee=round(oee, 1),
-        availability=round(availability, 1),
-        performance=round(performance, 1),
-        quality=round(quality, 1),
-        good_count=good_count,
-        bad_count=bad_count,
-        total_count=total_count,
-        runtime_minutes=round(runtime, 1),
-        downtime_minutes=round(downtime, 1),
-        rating=rating,
-    )
+        return OEEResponse(
+            oee=round(oee, 1),
+            availability=round(availability, 1),
+            performance=round(performance, 1),
+            quality=round(quality, 1),
+            good_count=good_count,
+            bad_count=bad_count,
+            total_count=total_count,
+            runtime_minutes=round(runtime, 1),
+            downtime_minutes=round(downtime, 1),
+            rating=rating,
+        )
+    
+    if telemetry:
+        with telemetry.track_tool("get_oee_summary"):
+            return _get_oee()
+    return _get_oee()
 
 @app.get("/downtime/summary", response_model=DowntimeResponse)
 async def get_downtime_summary(hours_back: int = Query(default=24, ge=1, le=168)):
     """Get downtime analysis for Press 103."""
-    current_state = mqtt_client.get_topic_value(TOPIC_STATE)
-    running = mqtt_client.get_topic_value(TOPIC_RUNNING)
-    is_running = str(running).lower() in ('true', '1', 'yes', 'running') if running else False
+    def _get_downtime():
+        current_state = mqtt_client.get_topic_value(TOPIC_STATE)
+        running = mqtt_client.get_topic_value(TOPIC_RUNNING)
+        is_running = str(running).lower() in ('true', '1', 'yes', 'running') if running else False
 
-    # Query MySQL for downtime Pareto
-    pareto_data = []
-    total_downtime = 0
-    planned_downtime = 0
-    unplanned_downtime = 0
+        # Query MySQL for downtime Pareto
+        pareto_data = []
+        total_downtime = 0
+        planned_downtime = 0
+        unplanned_downtime = 0
 
-    try:
-        query = """
-            SELECT 
-                COALESCE(sh.ReasonName, 'Unknown') as ReasonName,
-                sr.PlannedDowntime,
-                COUNT(*) as Events,
-                SUM(TIMESTAMPDIFF(MINUTE, sh.StartDateTime, 
-                    COALESCE(sh.EndDateTime, NOW()))) as Minutes
-            FROM mes_lite.statehistory sh
-            LEFT JOIN mes_lite.statereason sr ON sh.StateReasonID = sr.ID
-            WHERE sh.LineID = %s 
-              AND sh.StartDateTime >= DATE_SUB(NOW(), INTERVAL %s HOUR)
-            GROUP BY sh.ReasonName, sr.PlannedDowntime
-            ORDER BY Minutes DESC
-            LIMIT 10
-        """
-        pareto_data = execute_query(query, (PRESS_103_LINE_ID, hours_back))
+        try:
+            query = """
+                SELECT 
+                    COALESCE(sh.ReasonName, 'Unknown') as ReasonName,
+                    sr.PlannedDowntime,
+                    COUNT(*) as Events,
+                    SUM(TIMESTAMPDIFF(MINUTE, sh.StartDateTime, 
+                        COALESCE(sh.EndDateTime, NOW()))) as Minutes
+                FROM mes_lite.statehistory sh
+                LEFT JOIN mes_lite.statereason sr ON sh.StateReasonID = sr.ID
+                WHERE sh.LineID = %s 
+                  AND sh.StartDateTime >= DATE_SUB(NOW(), INTERVAL %s HOUR)
+                GROUP BY sh.ReasonName, sr.PlannedDowntime
+                ORDER BY Minutes DESC
+                LIMIT 10
+            """
+            pareto_data = execute_query(query, (PRESS_103_LINE_ID, hours_back))
 
-        for row in pareto_data:
+            for row in pareto_data:
+                minutes = row.get('Minutes') or 0
+                total_downtime += minutes
+                if row.get('PlannedDowntime'):
+                    planned_downtime += minutes
+                else:
+                    unplanned_downtime += minutes
+
+        except Exception as e:
+            logger.warning(f"Could not fetch downtime data: {e}")
+
+        # Build top reasons
+        top_reasons = []
+        for row in pareto_data[:5]:
             minutes = row.get('Minutes') or 0
-            total_downtime += minutes
-            if row.get('PlannedDowntime'):
-                planned_downtime += minutes
-            else:
-                unplanned_downtime += minutes
+            pct = (minutes / total_downtime * 100) if total_downtime > 0 else 0
+            top_reasons.append(DowntimeReason(
+                reason=row.get('ReasonName', 'Unknown'),
+                minutes=round(minutes, 1),
+                events=row.get('Events') or 0,
+                percent=round(pct, 1),
+                planned=bool(row.get('PlannedDowntime')),
+            ))
 
-    except Exception as e:
-        logger.warning(f"Could not fetch downtime data: {e}")
-
-    # Build top reasons
-    top_reasons = []
-    for row in pareto_data[:5]:
-        minutes = row.get('Minutes') or 0
-        pct = (minutes / total_downtime * 100) if total_downtime > 0 else 0
-        top_reasons.append(DowntimeReason(
-            reason=row.get('ReasonName', 'Unknown'),
-            minutes=round(minutes, 1),
-            events=row.get('Events') or 0,
-            percent=round(pct, 1),
-            planned=bool(row.get('PlannedDowntime')),
-        ))
-
-    return DowntimeResponse(
-        current_state=current_state or "Unknown",
-        is_running=is_running,
-        hours_analyzed=hours_back,
-        total_downtime_minutes=round(total_downtime, 1),
-        planned_minutes=round(planned_downtime, 1),
-        unplanned_minutes=round(unplanned_downtime, 1),
-        top_reasons=top_reasons,
-    )
+        return DowntimeResponse(
+            current_state=current_state or "Unknown",
+            is_running=is_running,
+            hours_analyzed=hours_back,
+            total_downtime_minutes=round(total_downtime, 1),
+            planned_minutes=round(planned_downtime, 1),
+            unplanned_minutes=round(unplanned_downtime, 1),
+            top_reasons=top_reasons,
+        )
+    
+    if telemetry:
+        with telemetry.track_tool("get_downtime_summary"):
+            return _get_downtime()
+    return _get_downtime()
 
 @app.post("/observation", response_model=ObservationResponse)
 async def log_observation(request: ObservationRequest):
     """Log an observation about Press 103 to the UNS."""
-    payload = json.dumps({
-        "timestamp": datetime.utcnow().isoformat() + "Z",
-        "source": "n8n-agent",
-        "category": request.category,
-        "message": request.message,
-    })
+    def _log_observation():
+        payload = json.dumps({
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "source": "n8n-agent",
+            "category": request.category,
+            "message": request.message,
+        })
 
-    result = mqtt_client.publish_message(
-        topic=TOPIC_AGENT_OBSERVATIONS,
-        payload=payload,
-        retain=False,
-        qos=1,
-    )
-
-    if result.get("success"):
-        return ObservationResponse(
-            success=True,
+        result = mqtt_client.publish_message(
             topic=TOPIC_AGENT_OBSERVATIONS,
-            message=request.message,
-            category=request.category,
-            timestamp=datetime.utcnow().isoformat() + "Z",
+            payload=payload,
+            retain=False,
+            qos=1,
         )
-    else:
-        raise HTTPException(status_code=500, detail=f"Failed to publish: {result.get('error')}")
+
+        if result.get("success"):
+            return ObservationResponse(
+                success=True,
+                topic=TOPIC_AGENT_OBSERVATIONS,
+                message=request.message,
+                category=request.category,
+                timestamp=datetime.utcnow().isoformat() + "Z",
+            )
+        else:
+            raise HTTPException(status_code=500, detail=f"Failed to publish: {result.get('error')}")
+    
+    if telemetry:
+        with telemetry.track_tool("log_observation"):
+            return _log_observation()
+    return _log_observation()
 
 # =============================================================================
 # MAIN ENTRY POINT

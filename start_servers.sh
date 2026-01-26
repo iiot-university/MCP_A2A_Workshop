@@ -136,9 +136,11 @@ start_server() {
         return 1
     fi
     
-    # Start the server in background (venv should still be active from setup_venv)
+    # Start the server in background using the venv's python explicitly
+    # (nohup spawns a new shell that doesn't inherit the activated venv)
     echo -e "${YELLOW}  Starting server on port $port...${NC}"
-    nohup python "$script" > "$log_file" 2>&1 &
+    local venv_python="$dir/venv/bin/python"
+    nohup "$venv_python" "$script" > "$log_file" 2>&1 &
     local pid=$!
     
     # Wait a moment and check if it's running

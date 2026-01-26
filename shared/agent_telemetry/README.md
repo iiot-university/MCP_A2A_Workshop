@@ -23,12 +23,11 @@ All telemetry publishes to a dedicated namespace under the enterprise hierarchy:
 
 ```
 Enterprise/Dallas/Agents/{agent_id}/
-├── Identity          # Static: Agent metadata (published on startup)
-├── Status            # Dynamic: Current connection/health status
-├── Heartbeat         # Periodic: Alive signal with timestamp
-├── Tools/
-│   └── {tool_name}   # Dynamic: Last invocation details per tool
-└── Activity          # Stream: Recent activity log (last N events)
+├── Identity          # Agent metadata (on startup + with heartbeat)
+├── Status            # Connection health (on change + with heartbeat)
+├── Heartbeat         # Alive signal (every 30 seconds)
+├── Tools/{tool_name} # Invocation details (on each call)
+└── Activity          # Event stream (startup, shutdown, tool calls)
 ```
 
 ### Topic Details
@@ -45,9 +44,23 @@ Enterprise/Dallas/Agents/{agent_id}/
 
 ---
 
+## Integrated Servers
+
+The following servers have telemetry enabled:
+
+| Server | Agent ID | Type | Status |
+|--------|----------|------|--------|
+| MQTT MCP Server | `mqtt-uns` | mcp | ✅ Integrated |
+| MySQL MCP Server | `mysql-mes` | mcp | ✅ Integrated |
+| MES MCP Server | `mes-press103` | mcp | ✅ Integrated |
+| Production Agent | `production-agent` | http | ✅ Integrated |
+| MES HTTP Server | `mes-http` | http | ✅ Integrated |
+
+---
+
 ## Payload Schemas
 
-### Identity (published once on startup)
+### Identity (published on startup + with heartbeat)
 
 ```json
 {
@@ -57,13 +70,13 @@ Enterprise/Dallas/Agents/{agent_id}/
   "version": "1.0.0",
   "description": "Domain-specific MES server for Press 103",
   "capabilities": ["mqtt", "mysql"],
-  "tools": ["get_equipment_status", "get_oee_summary", "get_downtime_summary", "get_active_work_order", "log_observation"],
+  "tools": ["get_equipment_status", "get_oee_summary", "get_downtime_summary"],
   "started_at": "2026-01-26T10:30:00Z",
   "host": "walkers-macbook.local"
 }
 ```
 
-### Status (published on connection changes)
+### Status (published on connection changes + with heartbeat)
 
 ```json
 {
@@ -71,6 +84,7 @@ Enterprise/Dallas/Agents/{agent_id}/
   "timestamp": "2026-01-26T10:35:00Z",
   "state": "running",
   "uptime_seconds": 300,
+  "telemetry_connected": true,
   "mqtt_connected": true,
   "mysql_connected": true,
   "tool_calls_total": 42,
@@ -96,7 +110,7 @@ Enterprise/Dallas/Agents/{agent_id}/
   "agent_id": "mes-press103",
   "tool": "get_oee_summary",
   "timestamp": "2026-01-26T10:34:15Z",
-  "duration_ms": 45,
+  "duration_ms": 45.2,
   "success": true,
   "error": null,
   "invocation_count": 12
@@ -112,101 +126,68 @@ Enterprise/Dallas/Agents/{agent_id}/
   "event": "tool_call",
   "details": {
     "tool": "get_oee_summary",
-    "success": true
+    "success": true,
+    "duration_ms": 45.2
   }
 }
 ```
 
 ---
 
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  Servers (import shared module)                                             │
-│                                                                             │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐              │
-│  │ MQTT MCP Server │  │ MySQL MCP Server│  │ MES MCP Server  │              │
-│  │ (mqtt-uns)      │  │ (mysql-mes)     │  │ (mes-press103)  │              │
-│  └────────┬────────┘  └────────┬────────┘  └────────┬────────┘              │
-│           │                    │                    │                       │
-│  ┌────────┴────────┐  ┌────────┴────────┐  ┌────────┴────────┐              │
-│  │ Production Agent│  │ MES HTTP Server │  │  (Future...)    │              │
-│  │ (A2A :8001)     │  │ (REST :8002)    │  │                 │              │
-│  └────────┬────────┘  └────────┬────────┘  └─────────────────┘              │
-│           │                    │                                            │
-└───────────┼────────────────────┼────────────────────────────────────────────┘
-            │                    │
-            ▼                    ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                        AgentTelemetry (shared module)                       │
-│                                                                             │
-│   - Manages dedicated MQTT connection for telemetry                         │
-│   - Publishes Identity on startup                                           │
-│   - Publishes Status on connection changes                                  │
-│   - Publishes Heartbeat every 30 seconds (background thread)                │
-│   - Provides decorators/wrappers for tool invocation tracking               │
-│   - Thread-safe, non-blocking                                               │
-│                                                                             │
-└──────────────────────────────────┬──────────────────────────────────────────┘
-                                   │
-                                   ▼ MQTT Publish
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              MQTT Broker (UNS)                              │
-│                        balancer.virtualfactory.online                       │
-│                                                                             │
-│   Enterprise/Dallas/Agents/                                                 │
-│   ├── mqtt-uns/                                                             │
-│   │   ├── Identity                                                          │
-│   │   ├── Status                                                            │
-│   │   ├── Heartbeat                                                         │
-│   │   └── Tools/list_uns_topics                                             │
-│   ├── mysql-mes/                                                            │
-│   │   ├── Identity                                                          │
-│   │   ├── Status                                                            │
-│   │   └── Tools/execute_query                                               │
-│   ├── mes-press103/                                                         │
-│   │   ├── Identity                                                          │
-│   │   ├── Status                                                            │
-│   │   └── Tools/get_oee_summary                                             │
-│   └── production-agent/                                                     │
-│       ├── Identity                                                          │
-│       ├── Status                                                            │
-│       └── Tools/get_equipment_status                                        │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Integration
+## Integration Guide
 
 ### For MCP Servers (stdio transport)
 
 ```python
-from shared.agent_telemetry import AgentTelemetry
+# 1. Add to imports (after logging is configured)
+import sys
+from pathlib import Path
 
-# Initialize telemetry
-telemetry = AgentTelemetry(
-    agent_id="mes-press103",
-    agent_type="mcp",
-    name="MES MCP Server - Press 103",
-    version="1.0.0",
-    tools=["get_equipment_status", "get_oee_summary", ...],
-)
+_project_root = Path(__file__).parent.parent.parent.parent
+sys.path.insert(0, str(_project_root))
 
-# Start telemetry (connects to MQTT, publishes Identity, starts heartbeat)
-telemetry.start()
+try:
+    from shared.agent_telemetry import AgentTelemetry
+    TELEMETRY_AVAILABLE = True
+except ImportError:
+    TELEMETRY_AVAILABLE = False
+    AgentTelemetry = None
 
-# Wrap tool calls to track invocations
+# 2. Create telemetry instance (after logger is defined)
+if TELEMETRY_AVAILABLE:
+    telemetry = AgentTelemetry(
+        agent_id="my-server",
+        agent_type="mcp",
+        name="My MCP Server",
+        version="1.0.0",
+        tools=["tool1", "tool2"],
+        capabilities=["mqtt"],
+    )
+else:
+    telemetry = None
+
+# 3. Wrap tool calls
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
-    with telemetry.track_tool(name):
-        # ... existing tool logic ...
-        return result
+    if telemetry:
+        with telemetry.track_tool(name):
+            return await _route_tool(name, arguments)
+    else:
+        return await _route_tool(name, arguments)
 
-# On shutdown
-telemetry.stop()
+# 4. Start/stop in main()
+async def main():
+    # ... connection setup ...
+    
+    if telemetry:
+        telemetry.start()
+        telemetry.update_status(mqtt=mqtt_connected)
+    
+    try:
+        # ... run server ...
+    finally:
+        if telemetry:
+            telemetry.stop()
 ```
 
 ### For HTTP Servers (FastAPI)
@@ -215,27 +196,27 @@ telemetry.stop()
 from shared.agent_telemetry import AgentTelemetry
 
 telemetry = AgentTelemetry(
-    agent_id="production-agent",
+    agent_id="my-http-server",
     agent_type="http",
-    name="Production Agent",
+    name="My HTTP Server",
     version="1.0.0",
-    tools=["get_equipment_status", "get_oee_summary", "get_downtime_summary"],
+    tools=["endpoint1", "endpoint2"],
 )
 
 @app.on_event("startup")
 async def startup():
     telemetry.start()
+    telemetry.update_status(mqtt=True, mysql=True)
 
 @app.on_event("shutdown")
 async def shutdown():
     telemetry.stop()
 
-# Wrap skill calls
-@app.get("/a2a/skills/get_equipment_status")
-async def skill_get_equipment_status():
-    with telemetry.track_tool("get_equipment_status"):
-        data = get_equipment_status()
-        return {"skill": "get_equipment_status", "data": data}
+@app.get("/api/endpoint1")
+async def endpoint1():
+    with telemetry.track_tool("endpoint1"):
+        # ... endpoint logic ...
+        return result
 ```
 
 ---
@@ -251,7 +232,7 @@ The module reads MQTT credentials from environment variables (same `.env` file):
 | `MQTT_USERNAME` | Authentication username |
 | `MQTT_PASSWORD` | Authentication password |
 
-Optional configuration via constructor:
+Optional constructor parameters:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
@@ -265,40 +246,30 @@ Optional configuration via constructor:
 
 ```
 shared/
+├── __init__.py             # Makes shared a package
 └── agent_telemetry/
-    ├── README.md           # This file
-    ├── __init__.py         # Package exports
-    ├── telemetry.py        # AgentTelemetry class
-    └── requirements.txt    # Dependencies (paho-mqtt, python-dotenv)
+    ├── __init__.py         # Package exports (AgentTelemetry)
+    ├── telemetry.py        # AgentTelemetry class implementation
+    ├── requirements.txt    # Dependencies (paho-mqtt, python-dotenv)
+    └── README.md           # This file
 ```
 
 ---
 
-## Viewing Telemetry in the UNS
+## Viewing Telemetry
 
-Once agents are running with telemetry enabled, you can view their state using:
+Once agents are running with telemetry enabled, view their state using:
 
 1. **MQTT Explorer** — Subscribe to `Enterprise/Dallas/Agents/#`
-2. **Claude Desktop** — Ask the MQTT MCP Server: "What agents are currently active?"
+2. **Claude Desktop** — Ask: "What agents are currently active in the UNS?"
 3. **Custom Dashboard** — Subscribe and visualize agent health
 
 ### Example Queries (via MQTT MCP Server)
 
 - "List all topics under Enterprise/Dallas/Agents"
 - "What is the status of the mes-press103 agent?"
-- "Show me the last tool invocation for the production agent"
+- "Show me the last tool invocation for the mysql-mes agent"
 - "Which agents have heartbeats in the last minute?"
-
----
-
-## Implementation Plan
-
-1. **Create shared module** — `shared/agent_telemetry/telemetry.py`
-2. **Integrate into MES MCP Server** — Test with one server first
-3. **Integrate into remaining MCP servers** — MQTT and MySQL servers
-4. **Integrate into HTTP servers** — Production Agent and MES HTTP Server
-5. **Test end-to-end** — Verify all agents visible in UNS
-6. **Document** — Update main README with telemetry info
 
 ---
 
@@ -309,4 +280,4 @@ paho-mqtt>=2.0.0
 python-dotenv>=1.0.0
 ```
 
-No additional dependencies beyond what the servers already use.
+**Note:** Servers using this module must have `paho-mqtt` installed in their virtual environment.

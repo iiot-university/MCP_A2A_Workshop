@@ -56,6 +56,21 @@ load_dotenv(env_path)
 logger.info(f"Loading environment from: {env_path}")
 
 # =============================================================================
+# AGENT TELEMETRY (UNS Publishing)
+# =============================================================================
+_project_root = Path(__file__).parent.parent.parent.parent
+sys.path.insert(0, str(_project_root))
+
+try:
+    from shared.agent_telemetry import AgentTelemetry
+    TELEMETRY_AVAILABLE = True
+    logger.info("Agent telemetry module loaded successfully")
+except ImportError as e:
+    TELEMETRY_AVAILABLE = False
+    AgentTelemetry = None
+    logger.warning(f"Agent telemetry not available: {e}")
+
+# =============================================================================
 # MQTT CONFIGURATION
 # =============================================================================
 MQTT_BROKER = os.getenv("MQTT_BROKER", "localhost")
@@ -565,13 +580,16 @@ task_storage: dict[str, Task] = {}
 # Global MQTT client instance
 mqtt_client = None
 
+# Global telemetry instance
+telemetry = None
+
 # =============================================================================
 # STARTUP/SHUTDOWN EVENTS
 # =============================================================================
 @app.on_event("startup")
 async def startup_event():
     """Initialize connections on startup."""
-    global mqtt_client
+    global mqtt_client, telemetry
     
     logger.info("=" * 50)
     logger.info("Starting Production Agent A2A Server")
@@ -582,19 +600,40 @@ async def startup_event():
     logger.info(f"UNS Base: {PRESS_103_UNS_BASE}")
     
     # Initialize MySQL connection pool
-    if not init_db_pool():
+    mysql_connected = init_db_pool()
+    if not mysql_connected:
         logger.warning("MySQL connection pool failed. Database queries may not work.")
     
     # Connect to MQTT broker
     mqtt_client = MQTTClientWrapper()
-    if not mqtt_client.connect():
+    mqtt_connected = mqtt_client.connect()
+    if not mqtt_connected:
         logger.warning("MQTT connection failed. Real-time data may not be available.")
+    
+    # Initialize telemetry
+    if TELEMETRY_AVAILABLE:
+        telemetry = AgentTelemetry(
+            agent_id="production-agent",
+            agent_type="http",
+            name="Production Agent - A2A Server",
+            version="1.0.0",
+            tools=["get_equipment_status", "get_oee_summary", "get_downtime_summary"],
+            capabilities=["mqtt", "mysql", "a2a"],
+            description="A2A server exposing Press 103 MES data",
+        )
+        telemetry.start()
+        telemetry.update_status(mqtt=mqtt_connected, mysql=mysql_connected)
+        logger.info("Agent telemetry started - publishing to UNS")
     
     logger.info("Production Agent startup complete")
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Clean up connections on shutdown."""
+    global telemetry
+    if telemetry:
+        telemetry.stop()
+        logger.info("Agent telemetry stopped")
     if mqtt_client:
         mqtt_client.disconnect()
     logger.info("Production Agent shutdown complete")
@@ -651,8 +690,30 @@ async def send_message(request: MessageRequest):
         # Extract message text
         message_text = request.message.parts[0].text if request.message.parts else ""
         
-        # Route to skill
-        skill_name, skill_result = route_message_to_skill(message_text)
+        # Route to skill (with telemetry tracking)
+        text_lower = message_text.lower()
+        
+        if any(keyword in text_lower for keyword in ['oee', 'performance', 'availability', 'quality', 'count']):
+            skill_name = "get_oee_summary"
+            if telemetry:
+                with telemetry.track_tool(skill_name):
+                    skill_result = get_oee_summary()
+            else:
+                skill_result = get_oee_summary()
+        elif any(keyword in text_lower for keyword in ['downtime', 'down', 'stopped', 'reason', 'why']):
+            skill_name = "get_downtime_summary"
+            if telemetry:
+                with telemetry.track_tool(skill_name):
+                    skill_result = get_downtime_summary()
+            else:
+                skill_result = get_downtime_summary()
+        else:
+            skill_name = "get_equipment_status"
+            if telemetry:
+                with telemetry.track_tool(skill_name):
+                    skill_result = get_equipment_status()
+            else:
+                skill_result = get_equipment_status()
         
         # Create task
         task_id = str(uuid.uuid4())
@@ -705,7 +766,11 @@ async def get_task(task_id: str):
 async def skill_get_equipment_status():
     """Direct access to get_equipment_status skill."""
     try:
-        data = get_equipment_status()
+        if telemetry:
+            with telemetry.track_tool("get_equipment_status"):
+                data = get_equipment_status()
+        else:
+            data = get_equipment_status()
         return {
             "skill": "get_equipment_status",
             "timestamp": datetime.utcnow().isoformat() + "Z",
@@ -719,7 +784,11 @@ async def skill_get_equipment_status():
 async def skill_get_oee_summary():
     """Direct access to get_oee_summary skill."""
     try:
-        data = get_oee_summary()
+        if telemetry:
+            with telemetry.track_tool("get_oee_summary"):
+                data = get_oee_summary()
+        else:
+            data = get_oee_summary()
         return {
             "skill": "get_oee_summary",
             "timestamp": datetime.utcnow().isoformat() + "Z",
@@ -733,7 +802,11 @@ async def skill_get_oee_summary():
 async def skill_get_downtime_summary(hours_back: int = 24):
     """Direct access to get_downtime_summary skill."""
     try:
-        data = get_downtime_summary(hours_back=hours_back)
+        if telemetry:
+            with telemetry.track_tool("get_downtime_summary"):
+                data = get_downtime_summary(hours_back=hours_back)
+        else:
+            data = get_downtime_summary(hours_back=hours_back)
         return {
             "skill": "get_downtime_summary",
             "timestamp": datetime.utcnow().isoformat() + "Z",
