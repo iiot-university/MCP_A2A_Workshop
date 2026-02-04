@@ -19,23 +19,28 @@ A hands-on 2-day workshop for engineers, integrators, and digital transformation
 
 ## New Feature: Agent Telemetry
 
-All servers now publish their state to the UNS in real-time. View active agents, tool invocations, and health status at:
+All servers now publish their state to the UNS in real-time. View active agents, tool invocations, and health status:
 
 ```
-Enterprise/Dallas/Agents/
-├── mqtt-uns/         # MQTT MCP Server telemetry
-├── mysql-mes/        # MySQL MCP Server telemetry
-├── mes-press103/     # MES MCP Server telemetry
-├── production-agent/ # Production Agent (A2A) telemetry
-└── mes-http/         # MES HTTP Server telemetry
+Enterprise/Dallas/
+├── MCP Servers/              # MCP server telemetry
+│   ├── mqtt-uns/
+│   ├── mysql-mes/
+│   └── mes-press103/
+│
+└── Agents/                   # HTTP/A2A agent telemetry
+    ├── production-agent/
+    └── mes-http/
 ```
 
-Each agent publishes:
+Each server publishes:
 - **Identity** — Agent name, version, tools, capabilities
 - **Status** — Connection state, uptime, error counts
 - **Heartbeat** — Alive signal every 30 seconds
-- **Tools/{name}** — Invocation details (duration, success/fail)
+- **Tools/{name}** — Invocation details (duration, success/fail, **arguments**)
 - **Activity** — Event stream (startup, shutdown, tool calls)
+
+Tool invocations include the arguments passed, so you can see exactly what was requested (sensitive fields like passwords are automatically redacted).
 
 See [shared/agent_telemetry/README.md](shared/agent_telemetry/README.md) for details.
 

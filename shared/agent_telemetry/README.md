@@ -11,7 +11,7 @@ This module provides a shared telemetry system that enables all MCP servers and 
 ### Why?
 
 - **Visibility** — See all active agents and their current state in one place
-- **Debugging** — Track tool invocations, errors, and performance
+- **Debugging** — Track tool invocations, arguments, errors, and performance
 - **Monitoring** — Heartbeats show which agents are alive and connected
 - **Audit Trail** — Log of what agents are doing and when
 
@@ -19,15 +19,23 @@ This module provides a shared telemetry system that enables all MCP servers and 
 
 ## UNS Topic Structure
 
-All telemetry publishes to a dedicated namespace under the enterprise hierarchy:
+Telemetry publishes to separate namespaces based on agent type:
 
 ```
-Enterprise/Dallas/Agents/{agent_id}/
-├── Identity          # Agent metadata (on startup + with heartbeat)
-├── Status            # Connection health (on change + with heartbeat)
-├── Heartbeat         # Alive signal (every 30 seconds)
-├── Tools/{tool_name} # Invocation details (on each call)
-└── Activity          # Event stream (startup, shutdown, tool calls)
+Enterprise/Dallas/
+├── MCP Servers/              # MCP server telemetry (stdio transport)
+│   ├── mqtt-uns/
+│   │   ├── Identity
+│   │   ├── Status
+│   │   ├── Heartbeat
+│   │   ├── Tools/{tool_name}
+│   │   └── Activity
+│   ├── mysql-mes/
+│   └── mes-press103/
+│
+└── Agents/                   # HTTP/A2A agent telemetry
+    ├── production-agent/
+    └── mes-http/
 ```
 
 ### Topic Details
@@ -37,10 +45,18 @@ Enterprise/Dallas/Agents/{agent_id}/
 | `.../Identity` | 1 | On startup + with heartbeat | Agent name, version, type, capabilities |
 | `.../Status` | 1 | On change + with heartbeat | Connection status, uptime, error count |
 | `.../Heartbeat` | 0 | Every 30s | Timestamp proving agent is alive |
-| `.../Tools/{name}` | 1 | On invocation | Last call time, duration, success/fail |
+| `.../Tools/{name}` | 1 | On invocation | Call time, duration, success/fail, **arguments** |
 | `.../Activity` | 0 | On event | Rolling log of recent actions |
 
 **Note:** No retained messages are used. Identity and Status are republished with each heartbeat so subscribers can discover active agents by listening for ~30 seconds.
+
+### Automatic Topic Selection
+
+The base topic is automatically selected based on `agent_type`:
+- `agent_type="mcp"` → `Enterprise/Dallas/MCP Servers`
+- `agent_type="http"` → `Enterprise/Dallas/Agents`
+
+You can override this by passing a custom `base_topic` parameter.
 
 ---
 
@@ -113,9 +129,18 @@ The following servers have telemetry enabled:
   "duration_ms": 45.2,
   "success": true,
   "error": null,
-  "invocation_count": 12
+  "invocation_count": 12,
+  "arguments": {
+    "line_id": 1,
+    "hours_back": 24
+  }
 }
 ```
+
+**Note:** Arguments are automatically sanitized:
+- Sensitive fields (password, token, secret, etc.) are redacted as `[REDACTED]`
+- Long strings (>500 chars) are truncated
+- Large lists (>10 items) are summarized
 
 ### Activity (published on significant events)
 
@@ -154,10 +179,11 @@ except ImportError:
     AgentTelemetry = None
 
 # 2. Create telemetry instance (after logger is defined)
+# Note: agent_type="mcp" automatically uses Enterprise/Dallas/MCP Servers base topic
 if TELEMETRY_AVAILABLE:
     telemetry = AgentTelemetry(
         agent_id="my-server",
-        agent_type="mcp",
+        agent_type="mcp",  # → publishes to Enterprise/Dallas/MCP Servers/my-server/
         name="My MCP Server",
         version="1.0.0",
         tools=["tool1", "tool2"],
@@ -166,11 +192,11 @@ if TELEMETRY_AVAILABLE:
 else:
     telemetry = None
 
-# 3. Wrap tool calls
+# 3. Wrap tool calls (pass arguments for logging)
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     if telemetry:
-        with telemetry.track_tool(name):
+        with telemetry.track_tool(name, arguments):  # arguments are logged!
             return await _route_tool(name, arguments)
     else:
         return await _route_tool(name, arguments)
@@ -195,9 +221,10 @@ async def main():
 ```python
 from shared.agent_telemetry import AgentTelemetry
 
+# Note: agent_type="http" automatically uses Enterprise/Dallas/Agents base topic
 telemetry = AgentTelemetry(
     agent_id="my-http-server",
-    agent_type="http",
+    agent_type="http",  # → publishes to Enterprise/Dallas/Agents/my-http-server/
     name="My HTTP Server",
     version="1.0.0",
     tools=["endpoint1", "endpoint2"],
@@ -213,8 +240,9 @@ async def shutdown():
     telemetry.stop()
 
 @app.get("/api/endpoint1")
-async def endpoint1():
-    with telemetry.track_tool("endpoint1"):
+async def endpoint1(hours_back: int = 24):
+    # Pass arguments for logging
+    with telemetry.track_tool("endpoint1", {"hours_back": hours_back}):
         # ... endpoint logic ...
         return result
 ```

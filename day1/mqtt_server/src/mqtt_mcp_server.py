@@ -555,7 +555,7 @@ async def list_tools() -> list[Tool]:
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     """Handle tool calls with telemetry tracking."""
     if telemetry:
-        with telemetry.track_tool(name):
+        with telemetry.track_tool(name, arguments):
             return await _route_tool(name, arguments)
     else:
         return await _route_tool(name, arguments)

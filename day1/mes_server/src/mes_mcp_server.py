@@ -535,7 +535,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     """Route tool calls to handlers with telemetry tracking."""
     # Use telemetry context manager if available, otherwise just call directly
     if telemetry:
-        with telemetry.track_tool(name):
+        with telemetry.track_tool(name, arguments):
             return await _route_tool(name, arguments)
     else:
         return await _route_tool(name, arguments)

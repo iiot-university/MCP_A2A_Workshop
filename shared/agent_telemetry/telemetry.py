@@ -72,7 +72,8 @@ MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "")
 # =============================================================================
 # DEFAULT CONFIGURATION
 # =============================================================================
-DEFAULT_BASE_TOPIC = "Enterprise/Dallas/Agents"
+DEFAULT_MCP_BASE_TOPIC = "Enterprise/Dallas/MCP Servers"
+DEFAULT_AGENT_BASE_TOPIC = "Enterprise/Dallas/Agents"
 DEFAULT_HEARTBEAT_INTERVAL = 30  # seconds
 
 
@@ -98,7 +99,7 @@ class AgentTelemetry:
         description: str = "",
         tools: Optional[list[str]] = None,
         capabilities: Optional[list[str]] = None,
-        base_topic: str = DEFAULT_BASE_TOPIC,
+        base_topic: Optional[str] = None,
         heartbeat_interval: int = DEFAULT_HEARTBEAT_INTERVAL,
         publish_activity: bool = True,
     ):
@@ -113,7 +114,7 @@ class AgentTelemetry:
             description: Brief description of what the agent does
             tools: List of tool/skill names this agent provides
             capabilities: List of capabilities (e.g., ["mqtt", "mysql"])
-            base_topic: UNS base path for telemetry topics
+            base_topic: UNS base path for telemetry topics (auto-selected based on agent_type if not provided)
             heartbeat_interval: Seconds between heartbeat publishes
             publish_activity: Whether to publish activity stream events
         """
@@ -124,9 +125,16 @@ class AgentTelemetry:
         self.description = description
         self.tools = tools or []
         self.capabilities = capabilities or []
-        self.base_topic = base_topic
         self.heartbeat_interval = heartbeat_interval
         self.publish_activity = publish_activity
+        
+        # Auto-select base topic based on agent type if not provided
+        if base_topic is not None:
+            self.base_topic = base_topic
+        elif agent_type == "mcp":
+            self.base_topic = DEFAULT_MCP_BASE_TOPIC
+        else:
+            self.base_topic = DEFAULT_AGENT_BASE_TOPIC
 
         # State tracking
         self._started_at: Optional[datetime] = None
@@ -296,10 +304,17 @@ class AgentTelemetry:
             "uptime_seconds": self._get_uptime_seconds(),
         }
 
-    def _build_tool_payload(self, tool_name: str, duration_ms: float, success: bool, error: Optional[str]) -> dict:
+    def _build_tool_payload(
+        self,
+        tool_name: str,
+        duration_ms: float,
+        success: bool,
+        error: Optional[str],
+        arguments: Optional[dict] = None,
+    ) -> dict:
         """Build Tool invocation payload."""
         stats = self._tool_stats.get(tool_name, {})
-        return {
+        payload = {
             "agent_id": self.agent_id,
             "tool": tool_name,
             "timestamp": self._get_timestamp(),
@@ -308,6 +323,44 @@ class AgentTelemetry:
             "error": error,
             "invocation_count": stats.get("count", 0),
         }
+        # Include arguments if provided (sanitize sensitive data)
+        if arguments is not None:
+            payload["arguments"] = self._sanitize_arguments(arguments)
+        return payload
+
+    def _sanitize_arguments(self, arguments: dict) -> dict:
+        """
+        Sanitize arguments to remove potentially sensitive data.
+        Truncates long string values and redacts password-like fields.
+        """
+        if not isinstance(arguments, dict):
+            return {"_raw": str(arguments)[:500]}
+        
+        sanitized = {}
+        sensitive_keys = {"password", "secret", "token", "key", "credential", "auth"}
+        
+        for key, value in arguments.items():
+            key_lower = key.lower()
+            
+            # Redact sensitive fields
+            if any(s in key_lower for s in sensitive_keys):
+                sanitized[key] = "[REDACTED]"
+            # Truncate long strings
+            elif isinstance(value, str) and len(value) > 500:
+                sanitized[key] = value[:500] + "...[truncated]"
+            # Handle nested dicts
+            elif isinstance(value, dict):
+                sanitized[key] = self._sanitize_arguments(value)
+            # Handle lists
+            elif isinstance(value, list):
+                if len(value) > 10:
+                    sanitized[key] = f"[list with {len(value)} items]"
+                else:
+                    sanitized[key] = value
+            else:
+                sanitized[key] = value
+        
+        return sanitized
 
     def _build_activity_payload(self, event: str, details: Optional[dict] = None) -> dict:
         """Build Activity payload."""
@@ -423,15 +476,19 @@ class AgentTelemetry:
             }), qos=0)
 
     @contextmanager
-    def track_tool(self, tool_name: str):
+    def track_tool(self, tool_name: str, arguments: Optional[dict] = None):
         """
         Context manager to track tool invocations.
         
         Usage:
-            with telemetry.track_tool("get_oee_summary"):
+            with telemetry.track_tool("get_oee_summary", {"line_id": 1}):
                 result = do_something()
         
-        Automatically tracks duration, success/failure, and publishes to UNS.
+        Automatically tracks duration, success/failure, arguments, and publishes to UNS.
+        
+        Args:
+            tool_name: Name of the tool being invoked
+            arguments: Optional dict of arguments passed to the tool (will be sanitized)
         """
         start_time = time.perf_counter()
         success = True
@@ -465,17 +522,20 @@ class AgentTelemetry:
             if self._connected:
                 self._publish(
                     f"Tools/{tool_name}",
-                    self._build_tool_payload(tool_name, duration_ms, success, error),
+                    self._build_tool_payload(tool_name, duration_ms, success, error, arguments),
                     qos=1,
                 )
 
             # Publish activity
             if self.publish_activity and self._connected:
-                self._publish("Activity", self._build_activity_payload("tool_call", {
+                activity_details = {
                     "tool": tool_name,
                     "success": success,
                     "duration_ms": round(duration_ms, 2),
-                }), qos=0)
+                }
+                if arguments:
+                    activity_details["arguments"] = self._sanitize_arguments(arguments)
+                self._publish("Activity", self._build_activity_payload("tool_call", activity_details), qos=0)
 
     def publish_custom_activity(self, event: str, details: Optional[dict] = None):
         """
